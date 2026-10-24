@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pedidos - REST + Polling</title>
+    <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header class="polling">
+    <h1>Estado de pedidos · REST + Polling</h1>
+    <p>El cliente pregunta al servidor cada cierto tiempo si hay cambios (GET /api/pedidos).</p>
+</header>
+<main>
+    <section class="tarjeta">
+        <h2>Métricas</h2>
+        <div class="metricas">
+            <div class="metrica"><span>Consultas de polling enviadas</span><strong id="solicitudes">0</strong></div>
+            <div class="metrica"><span>Respuestas sin cambios</span><strong id="sinCambios">0</strong></div>
+            <div class="metrica"><span>Último retraso</span><strong id="ultimoRetraso">-</strong></div>
+            <div class="metrica"><span>Retraso promedio</span><strong id="promedioRetraso">-</strong></div>
+            <div class="metrica"><span>Datos recibidos</span><strong id="bytes">0 KB</strong></div>
+        </div>
+        <p>Intervalo de consulta:
+            <select id="intervalo">
+                <option value="1000">1 segundo</option>
+                <option value="3000" selected>3 segundos</option>
+                <option value="5000">5 segundos</option>
+                <option value="10000">10 segundos</option>
+            </select>
+        </p>
+    </section>
+    <section class="tarjeta">
+        <h2>Nuevo pedido</h2>
+        <form id="formulario">
+            <input id="cliente" placeholder="Cliente" required>
+            <input id="producto" placeholder="Producto" required>
+            <button>Crear pedido</button>
+        </form>
+    </section>
+    <section class="tarjeta">
+        <h2>Pedidos</h2>
+        <table>
+            <thead><tr><th>ID</th><th>Cliente</th><th>Producto</th><th>Estado</th><th>Actualizado</th><th></th></tr></thead>
+            <tbody id="tabla"></tbody>
+        </table>
+    </section>
+    <section class="tarjeta">
+        <h2>Registro</h2>
+        <div id="registro"></div>
+    </section>
+</main>
+<script src="comun.js"></script>
+<script>
+    let solicitudes = 0, sinCambios = 0, versionActual = -1, temporizador = null, primera = true;
+
+    //Consulta periódica al servidor (Polling)
+    async function consultar() {
+        solicitudes++;
+        $('solicitudes').textContent = solicitudes;
+        try {
+            log(`HTTP → GET /api/pedidos (consulta #${solicitudes})`);
+            const res = await fetch('/api/pedidos');
+            log(`HTTP ← ${res.status} GET /api/pedidos`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const texto = await res.text();
+            sumarBytes(texto);
+            const datos = JSON.parse(texto);
+
+            if (datos.version === versionActual) {
+                sinCambios++;
+                $('sinCambios').textContent = sinCambios;
+                return;
+            }
+            versionActual = datos.version;
+            const cambiados = datos.pedidos.filter(p => medirRetraso(p, primera)).map(p => p.id);
+            primera = false;
+            dibujarTabla(datos.pedidos, cambiados, avanzar);
+        } catch (err) {
+            log('Error al consultar: ' + err.message);
+        }
+    }
+
+    function iniciarPolling() {
+        clearInterval(temporizador);
+        const ms = Number($('intervalo').value);
+        temporizador = setInterval(consultar, ms);
+        log(`Polling cada ${ms / 1000} s`);
+    }
+
+    async function avanzar(id) {
+        await fetch(`/api/pedidos/${id}/avanzar`, { method: 'PATCH' });
+        //El cambio se verá en la siguiente consulta
+    }
+
+    $('formulario').onsubmit = async (e) => {
+        e.preventDefault();
+        await fetch('/api/pedidos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cliente: $('cliente').value, producto: $('producto').value })
+        });
+        e.target.reset();
+    };
+
+    $('intervalo').onchange = iniciarPolling;
+    consultar();
+    iniciarPolling();
+</script>
+</body>
+</html>

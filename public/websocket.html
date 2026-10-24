@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pedidos - WebSockets</title>
+    <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header class="websocket">
+    <h1>Estado de pedidos · WebSockets</h1>
+    <p>Una sola conexión abierta: el servidor envía cada cambio en cuanto ocurre.</p>
+</header>
+<main>
+    <section class="tarjeta">
+        <h2>Métricas</h2>
+        <div class="metricas">
+            <div class="metrica"><span>Estado de la conexión</span><strong id="conexion">-</strong></div>
+            <div class="metrica"><span>Mensajes recibidos</span><strong id="mensajes">0</strong></div>
+            <div class="metrica"><span>Último retraso</span><strong id="ultimoRetraso">-</strong></div>
+            <div class="metrica"><span>Retraso promedio</span><strong id="promedioRetraso">-</strong></div>
+            <div class="metrica"><span>Datos recibidos</span><strong id="bytes">0 KB</strong></div>
+        </div>
+    </section>
+    <section class="tarjeta">
+        <h2>Nuevo pedido</h2>
+        <form id="formulario">
+            <input id="cliente" placeholder="Cliente" required>
+            <input id="producto" placeholder="Producto" required>
+            <button>Crear pedido</button>
+        </form>
+    </section>
+    <section class="tarjeta">
+        <h2>Pedidos</h2>
+        <table>
+            <thead><tr><th>ID</th><th>Cliente</th><th>Producto</th><th>Estado</th><th>Actualizado</th><th></th></tr></thead>
+            <tbody id="tabla"></tbody>
+        </table>
+    </section>
+    <section class="tarjeta">
+        <h2>Registro</h2>
+        <div id="registro"></div>
+    </section>
+</main>
+<script src="comun.js"></script>
+<script>
+    let socket, mensajes = 0, pedidos = [];
+
+    function conectar() {
+        //Se abre una conexión persistente con el servidor
+        socket = new WebSocket(`ws://${location.host}/ws`);
+
+        socket.onopen = () => {
+            $('conexion').textContent = 'Conectado';
+            log('Conexión WebSocket abierta');
+        };
+
+        //El servidor envía los datos sin que el cliente los pida (push)
+        socket.onmessage = (evento) => {
+            mensajes++;
+            $('mensajes').textContent = mensajes;
+            sumarBytes(evento.data);
+            log(`WS ← Servidor: ${evento.data}`);
+            const msg = JSON.parse(evento.data);
+
+            if (msg.tipo === 'inicial') {
+                pedidos = msg.pedidos;
+                pedidos.forEach(p => medirRetraso(p, true));
+                dibujarTabla(pedidos, [], avanzar);
+            } else if (msg.tipo === 'actualizacion') {
+                const i = pedidos.findIndex(p => p.id === msg.pedido.id);
+                if (i >= 0) pedidos[i] = msg.pedido; else pedidos.push(msg.pedido);
+                medirRetraso(msg.pedido, false);
+                dibujarTabla(pedidos, [msg.pedido.id], avanzar);
+            }
+        };
+
+        //Si se pierde la conexión, se intenta reconectar
+        socket.onclose = () => {
+            $('conexion').textContent = 'Desconectado';
+            log('Conexión cerrada, reintentando en 3 s...');
+            setTimeout(conectar, 3000);
+        };
+    }
+
+    //El cliente también envía mensajes por la misma conexión (bidireccional)
+    function enviar(datos) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            log('No se pudo enviar: espera a que la conexión esté activa.');
+            return false;
+        }
+        const texto = JSON.stringify(datos);
+        socket.send(texto);
+        log(`WS → Servidor: ${texto}`);
+        return true;
+    }
+
+    function avanzar(id) {
+        enviar({ tipo: 'avanzar', id });
+    }
+
+    $('formulario').onsubmit = (e) => {
+        e.preventDefault();
+        if (enviar({ tipo: 'crear', cliente: $('cliente').value, producto: $('producto').value })) {
+            e.target.reset();
+        }
+    };
+
+    conectar();
+</script>
+</body>
+</html>
